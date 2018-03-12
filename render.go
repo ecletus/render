@@ -2,14 +2,14 @@
 package render
 
 import (
-	"html/template"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/qor/qor"
 	"github.com/qor/assetfs"
 	"github.com/qor/qor/utils"
+	"github.com/moisespsena/template/html/template"
 )
 
 // DefaultLayout default layout name
@@ -18,19 +18,22 @@ const DefaultLayout = "application"
 // DefaultViewPath default view path
 const DefaultViewPath = "app/views"
 
+type FuncMapMaker func(values *template.FuncValues, render *Render, context *qor.Context) error
+
 // Config render config
 type Config struct {
 	ViewPaths       []string
 	DefaultLayout   string
-	FuncMapMaker    func(render *Render, request *http.Request, writer http.ResponseWriter) template.FuncMap
+	FuncMapMaker    FuncMapMaker
 	AssetFileSystem assetfs.Interface
 }
+
 
 // Render the render struct.
 type Render struct {
 	*Config
-
-	funcMaps template.FuncMap
+	funcMapMakers map[string]FuncMapMaker
+	funcs *template.FuncValues
 }
 
 // New initalize the render struct.
@@ -49,7 +52,7 @@ func New(config *Config, viewPaths ...string) *Render {
 
 	config.ViewPaths = append(append(config.ViewPaths, viewPaths...), DefaultViewPath)
 
-	render := &Render{funcMaps: map[string]interface{}{}, Config: config}
+	render := &Render{funcs: &template.FuncValues{}, Config: config}
 
 	for _, viewPath := range config.ViewPaths {
 		render.RegisterViewPath(viewPath)
@@ -121,23 +124,34 @@ func (render *Render) Layout(name string) *Template {
 }
 
 // Funcs set helper functions for template with default "application" layout.
-func (render *Render) Funcs(funcMap template.FuncMap) *Template {
-	tmpl := &Template{render: render, usingDefaultLayout: true}
-	return tmpl.Funcs(funcMap)
+func (render *Render) Funcs() *template.FuncValues {
+	return render.funcs
 }
 
 // Execute render template with default "application" layout.
-func (render *Render) Execute(name string, context interface{}, request *http.Request, writer http.ResponseWriter) error {
+func (render *Render) Execute(name string, data interface{}, context *qor.Context) error {
 	tmpl := &Template{render: render, usingDefaultLayout: true}
-	return tmpl.Execute(name, context, request, writer)
+	return tmpl.Execute(name, data, context)
+}
+
+func (render *Render) Template() *Template {
+	return &Template{render: render, usingDefaultLayout: true}
 }
 
 // RegisterFuncMap register FuncMap for render.
 func (render *Render) RegisterFuncMap(name string, fc interface{}) {
-	if render.funcMaps == nil {
-		render.funcMaps = template.FuncMap{}
+	err := render.funcs.Set(name, fc)
+	if err != nil {
+		panic(err)
 	}
-	render.funcMaps[name] = fc
+}
+
+// RegisterFuncMapMaker register FuncMap for render.
+func (render *Render) RegisterFuncMapMaker(name string, fm FuncMapMaker) {
+	if render.funcMapMakers == nil {
+		render.funcMapMakers = make(map[string]FuncMapMaker)
+	}
+	render.funcMapMakers[name] = fm
 }
 
 // Asset get content from AssetFS by name
