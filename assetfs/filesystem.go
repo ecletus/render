@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// AssetFileSystem AssetFS based on FileSystem
+// AssetFS AssetFS based on FileSystem
 type AssetFileSystem struct {
 	paths        []string
 	nameSpacedFS map[string]Interface

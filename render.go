@@ -3,119 +3,92 @@ package render
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/qor/qor"
-	"github.com/qor/assetfs"
-	"github.com/qor/qor/utils"
+	"github.com/microcosm-cc/bluemonday"
+	"github.com/moisespsena/go-assetfs"
 	"github.com/moisespsena/template/html/template"
+	"github.com/aghape/aghape"
+	"github.com/aghape/session"
+	"gopkg.in/mgo.v2/bson"
 )
 
 // DefaultLayout default layout name
 const DefaultLayout = "application"
 
-// DefaultViewPath default view path
-const DefaultViewPath = "app/views"
+func DefaultLocale() string {
+	locale := os.Getenv("LANG")
+	if locale != "" {
+		locale = strings.Split(locale, ".")[0]
+	}
+	return locale
+}
+
+var DEFAULT_LOCALE = DefaultLocale()
 
 type FuncMapMaker func(values *template.FuncValues, render *Render, context *qor.Context) error
 
 // Config render config
 type Config struct {
-	ViewPaths       []string
-	DefaultLayout   string
-	FuncMapMaker    FuncMapMaker
-	AssetFileSystem assetfs.Interface
+	DefaultLayout string
+	FuncMapMaker  FuncMapMaker
+	AssetFS       assetfs.Interface
+	DebugFiles    bool
 }
-
 
 // Render the render struct.
 type Render struct {
 	*Config
 	funcMapMakers map[string]FuncMapMaker
-	funcs *template.FuncValues
+	funcs         *template.FuncValues
 }
 
 // New initalize the render struct.
-func New(config *Config, viewPaths ...string) *Render {
+func New(config *Config) *Render {
 	if config == nil {
 		config = &Config{}
 	}
 
-	if config.DefaultLayout == "" {
-		config.DefaultLayout = DefaultLayout
-	}
-
-	if config.AssetFileSystem == nil {
-		config.AssetFileSystem = assetfs.AssetFS().NameSpace("views")
-	}
-
-	config.ViewPaths = append(append(config.ViewPaths, viewPaths...), DefaultViewPath)
-
 	render := &Render{funcs: &template.FuncValues{}, Config: config}
 
-	for _, viewPath := range config.ViewPaths {
-		render.RegisterViewPath(viewPath)
-	}
+	render.RegisterFuncMapMaker("qor_context", func(funcs *template.FuncValues, render *Render, context *qor.Context) error {
+		funcs.SetDefault("qor_context", func() *qor.Context {
+			return context
+		})
+
+		funcs.SetDefault("current_locale", func() string {
+			if cookie, err := context.Request.Cookie("locale"); err == nil {
+				return cookie.Value
+			}
+			return DEFAULT_LOCALE
+		})
+
+		funcs.SetDefault("flashes", func() []session.Message {
+			return context.SessionManager().Flashes()
+		})
+
+		ctx := context.GetI18nContext()
+		funcs.SetDefault("t", func(key string, args ...interface{}) template.HTML {
+			return template.HTML(ctx.T(key).DefaultAndDataFromArgs(args...).Get())
+		})
+
+		return nil
+	})
+
+	htmlSanitizer := bluemonday.UGCPolicy()
+	render.RegisterFuncMap("raw", func(str string) template.HTML {
+		return template.HTML(htmlSanitizer.Sanitize(str))
+	})
+	render.RegisterFuncMap("genid", func() string {
+		return bson.NewObjectId().Hex()
+	})
 
 	return render
 }
 
-// RegisterViewPath register view path
-func (render *Render) RegisterViewPath(paths ...string) {
-	for _, pth := range paths {
-		if filepath.IsAbs(pth) {
-			render.ViewPaths = append(render.ViewPaths, pth)
-			render.AssetFileSystem.RegisterPath(pth)
-		} else {
-			if absPath, err := filepath.Abs(pth); err == nil && isExistingDir(absPath) {
-				render.ViewPaths = append(render.ViewPaths, absPath)
-				render.AssetFileSystem.RegisterPath(absPath)
-			} else if isExistingDir(filepath.Join(utils.AppRoot, "vendor", pth)) {
-				render.AssetFileSystem.RegisterPath(filepath.Join(utils.AppRoot, "vendor", pth))
-			} else {
-				for _, gopath := range strings.Split(os.Getenv("GOPATH"), ":") {
-					if p := filepath.Join(gopath, "src", pth); isExistingDir(p) {
-						render.ViewPaths = append(render.ViewPaths, p)
-						render.AssetFileSystem.RegisterPath(p)
-					}
-				}
-			}
-		}
-	}
-}
-
-// PrependViewPath prepend view path
-func (render *Render) PrependViewPath(paths ...string) {
-	for _, pth := range paths {
-		if filepath.IsAbs(pth) {
-			render.ViewPaths = append([]string{pth}, render.ViewPaths...)
-			render.AssetFileSystem.PrependPath(pth)
-		} else {
-			if absPath, err := filepath.Abs(pth); err == nil && isExistingDir(absPath) {
-				render.ViewPaths = append([]string{absPath}, render.ViewPaths...)
-				render.AssetFileSystem.PrependPath(absPath)
-			} else if isExistingDir(filepath.Join(utils.AppRoot, "vendor", pth)) {
-				render.AssetFileSystem.PrependPath(filepath.Join(utils.AppRoot, "vendor", pth))
-			} else {
-				for _, gopath := range strings.Split(os.Getenv("GOPATH"), ":") {
-					if p := filepath.Join(gopath, "src", pth); isExistingDir(p) {
-						render.ViewPaths = append([]string{p}, render.ViewPaths...)
-						render.AssetFileSystem.PrependPath(p)
-					}
-				}
-			}
-		}
-	}
-}
-
 // SetAssetFS set asset fs for render
 func (render *Render) SetAssetFS(assetFS assetfs.Interface) {
-	for _, viewPath := range render.ViewPaths {
-		assetFS.RegisterPath(viewPath)
-	}
-
-	render.AssetFileSystem = assetFS
+	render.AssetFS = assetFS
 }
 
 // Layout set layout for template.
@@ -130,12 +103,12 @@ func (render *Render) Funcs() *template.FuncValues {
 
 // Execute render template with default "application" layout.
 func (render *Render) Execute(name string, data interface{}, context *qor.Context) error {
-	tmpl := &Template{render: render, usingDefaultLayout: true}
+	tmpl := &Template{render: render, usingDefaultLayout: true, DebugFiles: render.Config.DebugFiles}
 	return tmpl.Execute(name, data, context)
 }
 
 func (render *Render) Template() *Template {
-	return &Template{render: render, usingDefaultLayout: true}
+	return &Template{render: render, usingDefaultLayout: true, DebugFiles: render.Config.DebugFiles}
 }
 
 // RegisterFuncMap register FuncMap for render.
@@ -155,6 +128,6 @@ func (render *Render) RegisterFuncMapMaker(name string, fm FuncMapMaker) {
 }
 
 // Asset get content from AssetFS by name
-func (render *Render) Asset(name string) ([]byte, error) {
-	return render.AssetFileSystem.Asset(name)
+func (render *Render) Asset(name string) (assetfs.AssetInterface, error) {
+	return render.AssetFS.Asset(name)
 }

@@ -1,13 +1,13 @@
 # Render
 
-[Render](https://github.com/qor/render) provides handy controls when rendering templates.
+[Render](https://github.com/aghape/render) provides handy controls when rendering templates.
 
 ## Usage
 
-### Initialize [Render](https://github.com/qor/render)
+### Initialize [Render](https://github.com/aghape/render)
 
 ```go
-import "github.com/qor/render"
+import "github.com/aghape/render"
 
 func main() {
   Render := render.New(&render.Config{
@@ -28,7 +28,7 @@ Render.Execute("index", context, request, writer)
 
 The `Execute` function accepts 4 parameters:
 
-1. The template name. In this example [Render](https://github.com/qor/render) will look up template `index.tmpl` from view paths. the default view path is `{current_repo_path}/app/views`, and you could register more view paths.
+1. The template name. In this example [Render](https://github.com/aghape/render) will look up template `index.tmpl` from view paths. the default view path is `{current_repo_path}/app/views`, and you could register more view paths.
 2. The context you can use in the template, it is an `interface{}`, you could use that in views. for example, if you pass `context["CurrentUserName"] = "Memememe"` as the context. In the template, you can call `{% raw %}{{.CurrentUserName}}{% endraw %}` to get the value "Memememe".
 3. [http.Request](https://golang.org/pkg/net/http/#Request) of Go.
 4. [http.ResponseWriter](https://golang.org/pkg/net/http/#ResponseWriter) of Go.
@@ -56,11 +56,11 @@ The default layout is `{current_repo_path}/app/views/layouts/application.tmpl`. 
 Render.Layout("new_layout").Execute("index", context, request, writer)
 ```
 
-[Render](https://github.com/qor/render) will find the layout at `{current_repo_path}/app/views/layouts/new_layout.tmpl`.
+[Render](https://github.com/aghape/render) will find the layout at `{current_repo_path}/app/views/layouts/new_layout.tmpl`.
 
 ### Render with helper functions
 
-Sometimes you may want to have some helper functions in your template. [Render](https://github.com/qor/render) supports passing helper functions by `Funcs` function.
+Sometimes you may want to have some helper functions in your template. [Render](https://github.com/aghape/render) supports passing helper functions by `Funcs` function.
 
 ```go
 Render.Funcs(funcsMap).Execute("index", obj, request, writer)
@@ -84,7 +84,7 @@ The output is `Hello Memememe`.
 
 ### Use with [Responder](./responder.md)
 
-Put the [Render](https://github.com/qor/render) inside [Responder](./responder.md) handle function like this.
+Put the [Render](https://github.com/aghape/render) inside [Responder](./responder.md) handle function like this.
 
 ```go
 func handler(writer http.ResponseWriter, request *http.Request) {

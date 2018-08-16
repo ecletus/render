@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"fmt"
 	"path/filepath"
-	"github.com/qor/qor"
+
+	"github.com/moisespsena/go-assetfs"
+	"github.com/moisespsena/go-default-logger"
+	"github.com/moisespsena/go-path-helpers"
 	"github.com/moisespsena/template/cache"
 	"github.com/moisespsena/template/funcs"
 	"github.com/moisespsena/template/html/template"
+	"github.com/aghape/aghape"
 )
+
+var log = defaultlogger.NewLogger(path_helpers.GetCalledDir())
 
 // Template template struct
 type Template struct {
@@ -17,6 +23,7 @@ type Template struct {
 	usingDefaultLayout bool
 	funcMaps           []template.FuncMap
 	funcValues         []*template.FuncValues
+	DebugFiles         bool
 }
 
 // Layout set layout for template.
@@ -74,68 +81,87 @@ func (tmpl *Template) funcMapMaker(values *template.FuncValues, context *qor.Con
 }
 
 // Funcs register Funcs for tmpl
-func (tmpl *Template) Funcs(funcMaps ... template.FuncMap) *Template {
+func (tmpl *Template) Funcs(funcMaps ...template.FuncMap) *Template {
 	tmpl.funcMaps = append(tmpl.funcMaps, funcMaps...)
 	return tmpl
 }
 
 // Funcs register Funcs for tmpl
-func (tmpl *Template) FuncValues(funcValues ... *template.FuncValues) *Template {
+func (tmpl *Template) FuncValues(funcValues ...*template.FuncValues) *Template {
 	tmpl.funcValues = append(tmpl.funcValues, funcValues...)
 	return tmpl
 }
 
 // Render render tmpl
 func (tmpl *Template) Render(templateName string, obj interface{}, context *qor.Context) (template.HTML, error) {
-	var (
-		content    []byte
-		t          *template.Template
-		err        error
-		funcValues = &template.FuncValues{}
-		render     = func(name string, objs ...interface{}) (template.HTML, error) {
-			var (
-				err           error
-				renderObj     interface{}
-				renderContent []byte
-			)
+	var funcValues = &template.FuncValues{}
 
-			if len(objs) == 0 {
-				// default obj
-				renderObj = obj
-			} else {
-				// overwrite obj
-				for _, o := range objs {
-					renderObj = o
-					break
-				}
-			}
+	render := func(name string, require bool, objs ...interface{}) (template.HTML, error) {
+		var (
+			err       error
+			renderObj interface{}
+		)
+		if len(objs) == 0 {
+			// default obj
+			renderObj = obj
+		} else {
+			// overwrite obj
+			renderObj, objs = objs[0], objs[1:]
+		}
 
-			if renderContent, err = tmpl.findTemplate(name); err == nil {
-				var partialTemplate *template.Template
-				result := bytes.NewBufferString("")
-				if partialTemplate, err = template.New(filepath.Base(name)).Parse(string(renderContent)); err == nil {
-					if err = partialTemplate.CreateExecutor().FuncsValues(funcValues).Execute(result, renderObj); err == nil {
-						return template.HTML(result.String()), err
+		var exectr *template.Executor
+		if exectr, err = tmpl.GetExecutor(name); err == nil {
+			result := bytes.NewBufferString("")
+			exectr = exectr.FuncsValues(funcValues)
+			if len(objs) > 0 {
+				for i, max := 0, len(objs); i < max; i++ {
+					switch ot := objs[i].(type) {
+					case template.LocalData:
+						if i == 0 {
+							exectr.Local = &ot
+						} else {
+							exectr.Local.Merge(ot)
+						}
+					case map[interface{}]interface{}:
+						exectr.Local.Merge(ot)
+					default:
+						exectr.Local.Set(objs[i], objs[i+1])
+						i++
 					}
 				}
-			} else {
-				err = fmt.Errorf("failed to find template: %v", name)
 			}
-
-			if err != nil {
-				fmt.Println(err)
+			if err = exectr.Execute(result, renderObj); err == nil {
+				return template.HTML(result.String()), err
 			}
-
-			return "", err
 		}
-	)
+
+		if err != nil {
+			if et, ok := err.(*template.ErrorWithTrace); ok {
+				log.Error(err.Error() + "\n" + string(et.Trace()))
+			} else {
+				log.Error(err)
+			}
+		}
+
+		return "", err
+	}
+
+	require := func(name string, objs ...interface{}) (template.HTML, error) {
+		return render(name, true, objs...)
+	}
+
+	include := func(name string, objs ...interface{}) (template.HTML, error) {
+		return render(name, false, objs...)
+	}
 
 	tmpl.funcMapMaker(funcValues, context)
 
 	// funcMaps
-	funcValues.Set("render", render)
+	funcValues.Set("render", require)
+	funcValues.Set("require", require)
+	funcValues.Set("include", include)
 	funcValues.Set("yield", func() (template.HTML, error) {
-		return render(templateName)
+		return require(templateName)
 	})
 
 	layout := tmpl.layout
@@ -148,12 +174,9 @@ func (tmpl *Template) Render(templateName string, obj interface{}, context *qor.
 
 	if layout != "" {
 		name := filepath.Join("layouts", layout)
-		executor, err := tmpl.GetExecutor(name)
+		data, err := require(name)
 		if err == nil {
-			var tpl bytes.Buffer
-			if err = executor.FuncsValues(funcValues).Execute(&tpl, obj); err == nil {
-				return template.HTML(tpl.String()), nil
-			}
+			return data, nil
 		} else if !usingDefaultLayout {
 			err = fmt.Errorf("Failed to render layout: '%v.tmpl', got error: %v", filepath.Join("layouts", tmpl.layout), err)
 			fmt.Println(err)
@@ -161,21 +184,7 @@ func (tmpl *Template) Render(templateName string, obj interface{}, context *qor.
 		}
 	}
 
-	if content, err = tmpl.findTemplate(templateName); err == nil {
-		if t, err = template.New(templateName).Parse(string(content)); err == nil {
-			var tpl bytes.Buffer
-			if err = t.CreateExecutor().FuncsValues(funcValues).Execute(&tpl, obj); err == nil {
-				return template.HTML(tpl.String()), nil
-			}
-		}
-	} else {
-		err = fmt.Errorf("failed to find template: %v", templateName)
-	}
-
-	if err != nil {
-		fmt.Println(err)
-	}
-	return template.HTML(""), err
+	return require(templateName)
 }
 
 // Execute execute tmpl
@@ -192,20 +201,25 @@ func (tmpl *Template) Execute(templateName string, obj interface{}, context *qor
 	return err
 }
 
-func (tmpl *Template) findTemplate(name string) ([]byte, error) {
+func (tmpl *Template) findTemplate(name string) (assetfs.AssetInterface, error) {
 	return tmpl.render.Asset(name + ".tmpl")
 }
 
 func (tmpl *Template) GetExecutor(name string) (*template.Executor, error) {
 	return cache.Cache.LoadOrStore(name, func(name string) (*template.Executor, error) {
-		data, err := tmpl.findTemplate(name)
+		asset, err := tmpl.findTemplate(name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find template: %q", name)
 		}
-		t, err := template.New(name).Parse(string(data))
+		t, err := template.New(name).SetPath(asset.GetPath()).Parse(asset.GetString())
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse template %q: %v", name, err)
 		}
+
+		if tmpl.DebugFiles {
+			log.Debug(fmt.Sprintf("{%v} %v", name, asset.GetPath()))
+		}
+
 		return t.CreateExecutor(), nil
 	})
 }
