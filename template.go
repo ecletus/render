@@ -11,7 +11,7 @@ import (
 	"github.com/moisespsena/template/cache"
 	"github.com/moisespsena/template/funcs"
 	"github.com/moisespsena/template/html/template"
-	"github.com/aghape/aghape"
+	"github.com/aghape/core"
 )
 
 var log = defaultlogger.NewLogger(path_helpers.GetCalledDir())
@@ -33,7 +33,7 @@ func (tmpl *Template) Layout(name string) *Template {
 }
 
 // FuncMap get func maps from tmpl
-func (tmpl *Template) funcMapMaker(values *template.FuncValues, context *qor.Context) error {
+func (tmpl *Template) funcMapMaker(values *template.FuncValues, context *core.Context) error {
 	values.SetDefault("locale", func() string {
 		return context.GetLocale()
 	})
@@ -93,7 +93,7 @@ func (tmpl *Template) FuncValues(funcValues ...*template.FuncValues) *Template {
 }
 
 // Render render tmpl
-func (tmpl *Template) Render(templateName string, obj interface{}, context *qor.Context) (template.HTML, error) {
+func (tmpl *Template) Render(templateName string, obj interface{}, context *core.Context) (template.HTML, error) {
 	var funcValues = &template.FuncValues{}
 
 	render := func(name string, require bool, objs ...interface{}) (template.HTML, error) {
@@ -188,7 +188,7 @@ func (tmpl *Template) Render(templateName string, obj interface{}, context *qor.
 }
 
 // Execute execute tmpl
-func (tmpl *Template) Execute(templateName string, obj interface{}, context *qor.Context) error {
+func (tmpl *Template) Execute(templateName string, obj interface{}, context *core.Context) error {
 	result, err := tmpl.Render(templateName, obj, context)
 	if err == nil {
 		w := context.Writer

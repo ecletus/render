@@ -8,7 +8,7 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/moisespsena/go-assetfs"
 	"github.com/moisespsena/template/html/template"
-	"github.com/aghape/aghape"
+	"github.com/aghape/core"
 	"github.com/aghape/session"
 	"gopkg.in/mgo.v2/bson"
 )
@@ -26,7 +26,7 @@ func DefaultLocale() string {
 
 var DEFAULT_LOCALE = DefaultLocale()
 
-type FuncMapMaker func(values *template.FuncValues, render *Render, context *qor.Context) error
+type FuncMapMaker func(values *template.FuncValues, render *Render, context *core.Context) error
 
 // Config render config
 type Config struct {
@@ -51,8 +51,8 @@ func New(config *Config) *Render {
 
 	render := &Render{funcs: &template.FuncValues{}, Config: config}
 
-	render.RegisterFuncMapMaker("qor_context", func(funcs *template.FuncValues, render *Render, context *qor.Context) error {
-		funcs.SetDefault("qor_context", func() *qor.Context {
+	render.RegisterFuncMapMaker("qor_context", func(funcs *template.FuncValues, render *Render, context *core.Context) error {
+		funcs.SetDefault("qor_context", func() *core.Context {
 			return context
 		})
 
@@ -102,7 +102,7 @@ func (render *Render) Funcs() *template.FuncValues {
 }
 
 // Execute render template with default "application" layout.
-func (render *Render) Execute(name string, data interface{}, context *qor.Context) error {
+func (render *Render) Execute(name string, data interface{}, context *core.Context) error {
 	tmpl := &Template{render: render, usingDefaultLayout: true, DebugFiles: render.Config.DebugFiles}
 	return tmpl.Execute(name, data, context)
 }
