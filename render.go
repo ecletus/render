@@ -2,14 +2,14 @@
 package render
 
 import (
+	"github.com/moisespsena/go-assetfs"
 	"os"
 	"strings"
 
-	"github.com/microcosm-cc/bluemonday"
-	"github.com/moisespsena/go-assetfs"
-	"github.com/moisespsena/template/html/template"
 	"github.com/aghape/core"
 	"github.com/aghape/session"
+	"github.com/microcosm-cc/bluemonday"
+	"github.com/moisespsena/template/html/template"
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -34,6 +34,7 @@ type Config struct {
 	FuncMapMaker  FuncMapMaker
 	AssetFS       assetfs.Interface
 	DebugFiles    bool
+	DefaultLocale string
 }
 
 // Render the render struct.
@@ -49,6 +50,10 @@ func New(config *Config) *Render {
 		config = &Config{}
 	}
 
+	if config.DefaultLocale == "" {
+		config.DefaultLocale = DefaultLocale()
+	}
+
 	render := &Render{funcs: &template.FuncValues{}, Config: config}
 
 	render.RegisterFuncMapMaker("qor_context", func(funcs *template.FuncValues, render *Render, context *core.Context) error {
@@ -60,7 +65,7 @@ func New(config *Config) *Render {
 			if cookie, err := context.Request.Cookie("locale"); err == nil {
 				return cookie.Value
 			}
-			return DEFAULT_LOCALE
+			return config.DefaultLocale
 		})
 
 		funcs.SetDefault("flashes", func() []session.Message {
@@ -68,8 +73,13 @@ func New(config *Config) *Render {
 		})
 
 		ctx := context.GetI18nContext()
-		funcs.SetDefault("t", func(key string, args ...interface{}) template.HTML {
-			return template.HTML(ctx.T(key).DefaultAndDataFromArgs(args...).Get())
+
+		funcs.SetDefault("t", func(key string, defaul ...interface{}) template.HTML {
+			return template.HTML(ctx.T(key).DefaultArgs(defaul...).Get())
+		})
+
+		funcs.SetDefault("tt", func(key string, data interface{}, defaul ...interface{}) template.HTML {
+			return template.HTML(ctx.TT(key).DefaultArgs(defaul...).Data(data).Get())
 		})
 
 		return nil
