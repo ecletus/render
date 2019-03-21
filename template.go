@@ -11,7 +11,7 @@ import (
 	"github.com/moisespsena/template/cache"
 	"github.com/moisespsena/template/funcs"
 	"github.com/moisespsena/template/html/template"
-	"github.com/aghape/core"
+	"github.com/ecletus/core"
 )
 
 var log = defaultlogger.NewLogger(path_helpers.GetCalledDir())

@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/aghape/core"
-	"github.com/aghape/session"
+	"github.com/ecletus/core"
+	"github.com/ecletus/session"
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/moisespsena/template/html/template"
 	"gopkg.in/mgo.v2/bson"
