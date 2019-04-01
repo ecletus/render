@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/moisespsena/go-assetfs"
-	"github.com/moisespsena/go-default-logger"
-	"github.com/moisespsena/go-path-helpers"
+	"github.com/moisespsena-go/default-logger"
+	"github.com/moisespsena-go/path-helpers"
 	"github.com/moisespsena/template/cache"
 	"github.com/moisespsena/template/funcs"
 	"github.com/moisespsena/template/html/template"
