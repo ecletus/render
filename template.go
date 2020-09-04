@@ -2,224 +2,169 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"path/filepath"
+	"github.com/pkg/errors"
+	"io"
 
+	"github.com/moisespsena/template/render"
+
+	"github.com/ecletus/core"
 	"github.com/moisespsena-go/assetfs"
-	"github.com/moisespsena-go/default-logger"
-	"github.com/moisespsena-go/path-helpers"
+	defaultlogger "github.com/moisespsena-go/default-logger"
+	oscommon "github.com/moisespsena-go/os-common"
+	path_helpers "github.com/moisespsena-go/path-helpers"
 	"github.com/moisespsena/template/cache"
 	"github.com/moisespsena/template/funcs"
 	"github.com/moisespsena/template/html/template"
-	"github.com/ecletus/core"
 )
 
-var log = defaultlogger.NewLogger(path_helpers.GetCalledDir())
+var log = defaultlogger.GetOrCreateLogger(path_helpers.GetCalledDir())
 
 // Template template struct
 type Template struct {
-	render             *Render
-	layout             string
-	usingDefaultLayout bool
-	funcMaps           []template.FuncMap
-	funcValues         []*template.FuncValues
-	DebugFiles         bool
+	render.Template
+	render     *Render
+	DebugFiles bool
 }
 
-// Layout set layout for template.
-func (tmpl *Template) Layout(name string) *Template {
-	tmpl.layout = name
-	return tmpl
+func NewTemplate(render *Render) (t *Template) {
+	t = new(Template)
+	t.render = render
+	t.Template.GetExecutor = t.getExecutor
+	return
 }
 
 // FuncMap get func maps from tmpl
-func (tmpl *Template) funcMapMaker(values *template.FuncValues, context *core.Context) error {
-	values.SetDefault("locale", func() string {
+func (this *Template) prepare(values *template.FuncValues, context *core.Context) error {
+	values.Start().AppendValues(this.render.funcs)
+
+	if this.render.Config.FuncMapMaker != nil {
+		err := this.render.Config.FuncMapMaker(values, this.render, context)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, name := range this.render.funcMapMakers.names {
+		fm := this.render.funcMapMakers.m[name]
+		err := fm(values, this.render, context)
+		if err != nil {
+			return err
+		}
+	}
+
+	values.Set("locale", func() string {
 		return context.GetLocale()
 	})
-	values.SetDefault("prefix", func() string {
+	values.Set("prefix", func() string {
 		return ""
 	})
-	values.SetDefault("local_url", func(ctx *funcs.Context) func(...string) string {
+	values.Set("local_url", func(ctx *funcs.Context) func(...string) string {
 		prefix := ctx.Get("prefix").String()
 		return func(s ...string) string {
 			if prefix == "" {
-				return context.GenURL(s...)
+				return context.Path(s...)
 			}
-			return context.GenURL(append([]string{prefix}, s...)...)
+			return context.Path(append([]string{prefix}, s...)...)
 		}
 	})
-	values.SetDefault("local_static_url", func(ctx *funcs.Context) func(...string) string {
+	values.Set("local_static_url", func(ctx *funcs.Context) func(...string) string {
 		prefix := ctx.Get("prefix").String()
 		return func(s ...string) string {
 			if prefix == "" {
-				return context.GenStaticURL(s...)
+				return context.JoinStaticURL(s...)
 			}
-			return context.GenStaticURL(append([]string{prefix}, s...)...)
+			return context.JoinStaticURL(append([]string{prefix}, s...)...)
 		}
 	})
-	values.SetDefault("static_url", context.GenStaticURL)
-	values.SetDefault("url", context.GenURL)
+	values.Set("static_url", context.JoinStaticURL)
+	values.Set("url", context.Path)
 
-	values.AppendValues(tmpl.render.funcs)
-
-	if tmpl.render.Config.FuncMapMaker != nil {
-		err := tmpl.render.Config.FuncMapMaker(values, tmpl.render, context)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, fm := range tmpl.render.funcMapMakers {
-		err := fm(values, tmpl.render, context)
-		if err != nil {
-			return err
-		}
-	}
-
-	return values.Append(tmpl.funcMaps...)
-}
-
-// Funcs register Funcs for tmpl
-func (tmpl *Template) Funcs(funcMaps ...template.FuncMap) *Template {
-	tmpl.funcMaps = append(tmpl.funcMaps, funcMaps...)
-	return tmpl
-}
-
-// Funcs register Funcs for tmpl
-func (tmpl *Template) FuncValues(funcValues ...*template.FuncValues) *Template {
-	tmpl.funcValues = append(tmpl.funcValues, funcValues...)
-	return tmpl
+	return values.Append(this.Funcs...)
 }
 
 // Render render tmpl
-func (tmpl *Template) Render(templateName string, obj interface{}, context *core.Context) (template.HTML, error) {
-	var funcValues = &template.FuncValues{}
-
-	render := func(name string, require bool, objs ...interface{}) (template.HTML, error) {
-		var (
-			err       error
-			renderObj interface{}
-		)
-		if len(objs) == 0 {
-			// default obj
-			renderObj = obj
-		} else {
-			// overwrite obj
-			renderObj, objs = objs[0], objs[1:]
-		}
-
-		var exectr *template.Executor
-		if exectr, err = tmpl.GetExecutor(name); err == nil {
-			result := bytes.NewBufferString("")
-			exectr = exectr.FuncsValues(funcValues)
-			if len(objs) > 0 {
-				for i, max := 0, len(objs); i < max; i++ {
-					switch ot := objs[i].(type) {
-					case template.LocalData:
-						if i == 0 {
-							exectr.Local = &ot
-						} else {
-							exectr.Local.Merge(ot)
-						}
-					case map[interface{}]interface{}:
-						exectr.Local.Merge(ot)
-					default:
-						exectr.Local.Set(objs[i], objs[i+1])
-						i++
-					}
-				}
-			}
-			if err = exectr.Execute(result, renderObj); err == nil {
-				return template.HTML(result.String()), err
-			}
-		}
-
+func (this Template) RenderW(state *template.State, w io.Writer, templateName string, obj interface{}, ctx *core.Context, lang ...string) (err error) {
+	defer func() {
 		if err != nil {
-			if et, ok := err.(*template.ErrorWithTrace); ok {
-				log.Error(err.Error() + "\n" + string(et.Trace()))
-			} else {
-				log.Error(err)
-			}
+			err = errors.Wrap(err, pkg+": RenderW `"+templateName+"` failed")
 		}
-
-		return "", err
+	}()
+	var values template.FuncValues
+	if err = (&this).prepare(&values, ctx); err != nil {
+		return
 	}
+	var Context context.Context = ctx
+	this.FuncValues.Append(values)
+	return this.Template.Render(state, w, Context, templateName, obj, lang...)
+}
 
-	require := func(name string, objs ...interface{}) (template.HTML, error) {
-		return render(name, true, objs...)
+// Render render tmpl
+func (this Template) Render(state *template.State, templateName string, obj interface{}, ctx *core.Context, lang ...string) (s template.HTML, err error) {
+	var w bytes.Buffer
+	if err = this.RenderW(state, &w, templateName, obj, ctx, lang...); err != nil {
+		return
 	}
-
-	include := func(name string, objs ...interface{}) (template.HTML, error) {
-		return render(name, false, objs...)
-	}
-
-	tmpl.funcMapMaker(funcValues, context)
-
-	// funcMaps
-	funcValues.Set("render", require)
-	funcValues.Set("require", require)
-	funcValues.Set("include", include)
-	funcValues.Set("yield", func() (template.HTML, error) {
-		return require(templateName)
-	})
-
-	layout := tmpl.layout
-	usingDefaultLayout := false
-
-	if layout == "" && tmpl.usingDefaultLayout {
-		usingDefaultLayout = true
-		layout = tmpl.render.DefaultLayout
-	}
-
-	if layout != "" {
-		name := filepath.Join("layouts", layout)
-		data, err := require(name)
-		if err == nil {
-			return data, nil
-		} else if !usingDefaultLayout {
-			err = fmt.Errorf("Failed to render layout: '%v.tmpl', got error: %v", filepath.Join("layouts", tmpl.layout), err)
-			fmt.Println(err)
-			return template.HTML(""), err
-		}
-	}
-
-	return require(templateName)
+	return template.HTML(w.String()), nil
 }
 
 // Execute execute tmpl
-func (tmpl *Template) Execute(templateName string, obj interface{}, context *core.Context) error {
-	result, err := tmpl.Render(templateName, obj, context)
-	if err == nil {
-		w := context.Writer
-		if w.Header().Get("Content-Type") == "" {
-			w.Header().Set("Content-Type", "text/html")
+func (this *Template) Execute(templateName string, obj interface{}, context *core.Context) (err error) {
+	var w bytes.Buffer
+	if err = this.RenderW(nil, &w, templateName, obj, context); err == nil {
+		cw := context.Writer
+		if cw.Header().Get("Content-Type") == "" {
+			cw.Header().Set("Content-Type", "text/html")
 		}
 
-		_, err = w.Write([]byte(result))
+		_, err = cw.Write(w.Bytes())
 	}
-	return err
+	return
 }
 
-func (tmpl *Template) findTemplate(name string) (assetfs.AssetInterface, error) {
-	return tmpl.render.Asset(name + ".tmpl")
+func (this *Template) findTemplate(name string) (assetfs.AssetInterface, error) {
+	return this.render.Asset(name + ".tmpl")
 }
 
-func (tmpl *Template) GetExecutor(name string) (*template.Executor, error) {
+func (this *Template) getExecutor(name string) (*template.Executor, error) {
 	return cache.Cache.LoadOrStore(name, func(name string) (*template.Executor, error) {
-		asset, err := tmpl.findTemplate(name)
+		asset, err := this.findTemplate(name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find template: %q", name)
+			if pathErr, ok := err.(*oscommon.PathError); ok {
+				pathErr.AddMessage(fmt.Sprintf("failed to find template: %q", name))
+				return nil, err
+			}
+			return nil, fmt.Errorf("failed to find template %q: %q", name, err.Error())
 		}
-		t, err := template.New(name).SetPath(asset.GetPath()).Parse(asset.GetString())
+		var data string
+		if data, err = assetfs.DataS(asset); err != nil {
+			return nil, err
+		}
+		t, err := template.New(name).SetPath(asset.Path()).Parse(data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse template %q: %v", name, err)
 		}
 
-		if tmpl.DebugFiles {
-			log.Debug(fmt.Sprintf("{%v} %v", name, asset.GetPath()))
+		if this.DebugFiles {
+			log.Debug(fmt.Sprintf("{%v} %v", name, asset.Path()))
 		}
 
 		return t.CreateExecutor(), nil
 	})
+}
+
+func (this Template) SetLayout(layout string) *Template {
+	this.Layout = layout
+	return &this
+}
+
+func (this Template) SetFuncValues(fv ...template.FuncValues) *Template {
+	this.FuncValues.Append(fv...)
+	return &this
+}
+
+func (this Template) SetFuncs(fv ...template.FuncMap) *Template {
+	this.Funcs.Append(fv...)
+	return &this
 }
